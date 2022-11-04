@@ -16,30 +16,42 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
+
+#Sheet ID in sheetdb.io account
 sheetid = '6nft8lldpl1as'
 
 league_details = {}
 leagues = []
 
+#Load all the active leagues
 leagues = json.loads(requests.get('https://sheetdb.io/api/v1/{}/search?sheet=Leagues&Active=Yes'.format(sheetid)).content)
+#Load all the divisions
 all_divisions = json.loads(requests.get('https://sheetdb.io/api/v1/{}?sheet=Divisions'.format(sheetid)).content)
+#Load all the active divisions
 active_divisions = json.loads(requests.get('https://sheetdb.io/api/v1/{}/search?sheet=Divisions&Active=Yes&Location=Snookered - Frisco'.format(sheetid)).content)
+#Load the table assignment configurations
 table_assignment_configurations = json.loads(requests.get('https://sheetdb.io/api/v1/{}?sheet=Table Assignment Configuration'.format(sheetid)).content)
 
 if True:
     print("Extracting league data " + str(datetime.now()))
 
+    #Loop through each league URL pulling in all the divisions from drop down list and storing them in the divisions spreadsheet if they dont exist
     for league in leagues:
         html_page = requests.get(league['League URL'], headers={'User-Agent': 'Mozilla/5.0'})
         soup = BeautifulSoup(html_page.content, 'html.parser')
         selects = soup.find_all('select', class_='form-control')[0]
         options = selects.find_all('option')
 
+        #Each option in the drop down
         for option in options:
             division_guid = option.attrs.get('value')
             division_name = option.text.strip()
+
+            #If the division is in the list of active divisions store the details about it in the leagues collection
             if division_guid in [x['Division GUID'] for x in active_divisions]:
                 league_details[division_guid] = dict(name=division_name, league_name=league['League Name'], league_url=league['League URL'], sanctioned_by=league['Sanctioned By'])
+
+            #If its not in the divisions at all, add it but do not set it as active. That will be done manually by an administrator
             if division_guid not in [x['Division GUID'] for x in all_divisions]:
                 data = {'data': [{
                     'Entity': league['League Name'],
@@ -53,6 +65,7 @@ if True:
                                          data=json.dumps(data), headers={'Content-type': 'application/json'})
 
     def update_player_team(guid, player_name, team_name):
+        #This is kind of a hack, but the way LMS stores info makes it difficult to know when you've got ALL the players on a team. This just adds a player to the team collection for the league passed in.
         standings = league_details[guid]['player_standings']
         for player in standings:
             if player[1] == player_name and player[-1] != -99:
@@ -61,6 +74,7 @@ if True:
                 break
 
     def get_match_score(league_detail, match_url):
+        #LMS has a variety of league/scoring formats. This attempts to scrape the score from each submitted score sheet.
         if league_detail['sanctioned_by'] == 'BCAPL/ACS':
             try:
                 if ds_session:
@@ -101,6 +115,7 @@ if True:
                 pass
         return 0, 0
 
+    #Loop through each division getting all the related data (schedules, standings, teams, players)
     for division in active_divisions:
         guid = division['Division GUID']
         if guid in league_details:
@@ -159,10 +174,8 @@ if True:
                         break
 
             print("...getting teams")
-            #print('https://lms.fargorate.com/PublicReport/GeneratePlayerStandingsByTeamReport/{}'.format(guid))
             dfs = pd.read_html('https://lms.fargorate.com/PublicReport/GeneratePlayerStandingsByTeamReport/{}'.format(guid))
             list_of_values = dfs[0].values.tolist()
-            #print(list_of_values)
             team_name = None
             for row in list_of_values:
                 if row[0] == row[1]:
@@ -171,8 +184,7 @@ if True:
                 else:
                     update_player_team(guid, row[0], team_name)
 
-            #break
-
+    #Prepare for storing the data that has been loaded by removing all the existing data
     print("Deleting existing data...")
     response = requests.delete('https://sheetdb.io/api/v1/{}/all?sheet=Standings'.format(sheetid))
     response = requests.delete('https://sheetdb.io/api/v1/{}/all?sheet=Player Standings'.format(sheetid))
@@ -183,8 +195,8 @@ if True:
             details = league_details[division['Division GUID']]
             data_rows = []
             if 'standings' in details:
+                #Format the data to be stored in the sheet in a way that sheetdb.io understands
                 for standing in details['standings']:
-                    #print(standing)
                     data_array = {
                                 'League Name': details['league_name'],
                                 'Sanctioned By': details['sanctioned_by'],
@@ -200,8 +212,9 @@ if True:
                                 'Weeks': standing[5] if len(standing) == 6 else 0
                     }
                     data_rows.append(data_array)
-            print("Saving standings...")
             
+            #Save the standings
+            print("Saving standings...")
             if data_rows:
                 response = requests.post('https://sheetdb.io/api/v1/{}?sheet=Standings'.format(sheetid), json.dumps({'data': data_rows}), headers={'Content-type': 'application/json'})
 
@@ -223,11 +236,13 @@ if True:
                 }
                 data_rows.append(data_array)
             
+            #Save the schedules
             print("Saving schedules...")
             if data_rows:
                 response = requests.post('https://sheetdb.io/api/v1/{}?sheet=Schedules'.format(sheetid), json.dumps({'data': data_rows}),
                                      headers={'Content-type': 'application/json'})
 
+            #Depending on the league sanctioning, the format of the data from LMS can be completely different. This attempts to parse out the league standings
             try:
                 data_rows = []
                 for ps in details['player_standings']:
@@ -266,6 +281,7 @@ if True:
             except Exception as e:
                 print(e)
 
+            #Save the sandings
             if 'standings' in details:
                 response = requests.put('https://sheetdb.io/api/v1/{}/Division GUID/{}?sheet=Divisions'.format(sheetid,
                                                                                                            division['Division GUID']),
@@ -278,16 +294,19 @@ from datetime import datetime
 current_date = datetime.today()
 current_year, current_week_num, current_day_num = current_date.isocalendar()
 
-if True:
-#if current_day_num == 1:
+#Run on mondays (at 9am)
+if current_day_num == 1:
     print("Generating table assignments " + str(current_date))
     from dateutil import parser
     import re
 
+    #Get all the schedules for active leagues
     all_schedules = json.loads(requests.get('https://sheetdb.io/api/v1/{}/search?sheet=Schedules&Active=Yes'.format(sheetid)).content)
+    #Just get the ones scheduled at Snookered
     snookered_schedules = [x for x in all_schedules if 'Snookered' in x['Location']]
     days_of_week = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
+    #Get the collection of available table clusters from the Table Assignment Configuration sheet. Configurations are associated by day number AND sanctioning type so multiple league types can play on different tables at the same time
     available_table_clusters = {}
     for c in table_assignment_configurations:
         config = available_table_clusters.get(days_of_week.index(c['Day Of Week']) + 1, {})
@@ -296,10 +315,13 @@ if True:
         config[c['Sanctioned By']] = sanction_clusters
         available_table_clusters[days_of_week.index(c['Day Of Week']) + 1] = config
 
+    #This is just to ensure the owners ALWAYS get the restaurant side so we arent bothered by customers all night ;) This can be removed later
     dedicated_table_clusters =  {'We Were On A Break' : "15 / 16 / 17"}
     reduced_matches = dict()
     sanction_priority = ['BCAPL/ACS', 'BCAPL/USAPL'] #Schedule BCA matches first because they require 2-table clusters, USAPL requires 3
 
+    #Loop over all the scheduled matches and reduce DOUBLE JEOPARDY matches down to 1 match. This is when teams play 8 and 9 ball at the same time. In LMS that shows up as 2 different matches, this consolidates
+    #them into 1 so they use the same table cluster for both matches.
     for schedule in snookered_schedules:
         sd = parser.parse(schedule['Date'])
         year, week_num, day_of_week = sd.isocalendar()
@@ -320,6 +342,7 @@ if True:
             else:
                 reduced_matches[slug]['Alternate Division GUID'] = schedule['Division GUID']
 
+    #Loop over the reduced matches grabbing an available table cluster and removing it from the list of available table clusters
     final_matches = []
     for key, value in reduced_matches.items():
         for sanctioned_by in sanction_priority:
@@ -340,12 +363,13 @@ if True:
                         value['Tables'] = "?"
         final_matches.append(value)
 
-
+    #Get the list of open tables for each day of the week
     open_tables = {}
     for key, value in available_table_clusters.items():
         if 'Open' in value:
             open_tables[key] = value['Open'][0]
 
+    #Create the open table collection to be stored for each day in the format that sheetdb.io likes
     open_table_matches = {}
     for match in final_matches:
         day_of_week = match['Day Of Week']
@@ -364,14 +388,14 @@ if True:
             }
             open_table_matches[day_of_week] = open_table_match
 
+    #Append the open tables to the final list of matches
     if open_table_matches:
         final_matches.extend(open_table_matches.values())
-
-
 
     #Sort the matches in order by date
     reduced_matches = sorted(final_matches, key=lambda d: d['Date Raw'])
 
+    #Create the final collection in the sheetdb.io format 
     data_rows = []
     for value in reduced_matches:
         data_rows.append({
@@ -386,6 +410,7 @@ if True:
             'Tables': value['Tables']
         })
 
+    #Clear the sheet and store the data
     requests.delete('https://sheetdb.io/api/v1/{}/all?sheet=Table Assignments'.format(sheetid))
     response = requests.post('https://sheetdb.io/api/v1/{}?sheet=Table Assignments'.format(sheetid),
                                  json.dumps({'data': data_rows}), headers={'Content-type': 'application/json'})
