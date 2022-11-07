@@ -18,7 +18,7 @@ from datetime import datetime
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
 #Sheet ID in sheetdb.io account
-sheetid = '6nft8lldpl1as'
+sheetid = 'l1qhwfpspvmkk'
 
 league_details = {}
 leagues = []
