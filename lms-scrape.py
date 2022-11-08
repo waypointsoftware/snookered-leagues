@@ -316,7 +316,7 @@ if current_day_num == 1:
         available_table_clusters[days_of_week.index(c['Day Of Week']) + 1] = config
 
     #This is just to ensure the owners ALWAYS get the restaurant side so we arent bothered by customers all night ;) This can be removed later
-    dedicated_table_clusters =  {'We Were On A Break' : "15 / 16 / 17"}
+    #dedicated_table_clusters =  {'We Were On A Break' : "15 / 16 / 17"}
     reduced_matches = dict()
     sanction_priority = ['BCAPL/ACS', 'BCAPL/USAPL'] #Schedule BCA matches first because they require 2-table clusters, USAPL requires 3
 
@@ -348,19 +348,10 @@ if current_day_num == 1:
         for sanctioned_by in sanction_priority:
             if value['Sanctioned By'] == sanctioned_by:
                 tables = available_table_clusters[value['Day Of Week']].get(value['Sanctioned By'], None)
-                if value['Clean Home Team'] in dedicated_table_clusters or value['Clean Away Team'] in dedicated_table_clusters:
-                    dedicated_tables = dedicated_table_clusters.get(value['Clean Home Team'], dedicated_table_clusters.get(value['Clean Away Team']))
-                    value['Tables'] = dedicated_tables
-                    try:
-                        index = tables.index(dedicated_tables)
-                        del tables[index]
-                    except:
-                        pass
+                if len(tables) > 0:
+                    value['Tables'] = tables.pop(0)
                 else:
-                    if len(tables) > 0:
-                        value['Tables'] = tables.pop(0)
-                    else:
-                        value['Tables'] = "?"
+                    value['Tables'] = "?"
         final_matches.append(value)
 
     #Get the list of open tables for each day of the week
